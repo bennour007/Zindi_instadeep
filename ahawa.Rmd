@@ -1,0 +1,332 @@
+---
+title: "competition"
+author: "lemoi"
+date: "September 12, 2019"
+output: 
+  html_document: 
+    theme: spacelab
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd(dir = "~/Rprojects/instadeep/ahawa")
+```
+
+```{r}
+library(tidyverse)
+library(caret)
+```
+load data
+```{r}
+train <- read_csv("~/Rprojects/instadeep/Train_v2.csv")
+test <- read_csv("~/Rprojects/instadeep/Test_v2.csv")
+
+str(train)
+```
+change the colnames 
+```{r}
+colnames (train)[4:13] <- c("y","location","cellphone", "housing", "age", "gender", "relation", "status","education","job") 
+colnames (test)[4:12] <- c("location","cellphone", "housing", "age", "gender", "relation", "status","education","job")
+colnames(test)
+```
+now we have good variable names that we can easilly refer to.
+the job is find some sort of a classification of the presented variables with the y target.
+let's discover y.
+```{r}
+#y over countries
+train %>% 
+  select(country, y) %>%
+  table() %>% 
+  as.tibble() %>%
+  spread(y,n) %>% 
+  mutate(N = No + Yes)
+  
+ggplot(data= train, aes(x=y, fill = y)) + geom_histogram(stat = "count") + facet_wrap(vars(country))
+```
+
+```{r}
+#y over years
+train %>% 
+  select(year, y) %>%
+  table() %>%
+  as.tibble() %>%
+  spread(y, n) %>%
+  mutate(N = Yes + No)
+ggplot(train, aes(x=y, fill = y)) + geom_histogram(stat = "count") + facet_wrap(vars(country))
+```
+
+The most important characteristic of the attribute is where it was captured and at what year, these characteristics are summerized now, giving us the opportunity to move along and analyze the rest of the variables in regard with the targrt variable.
+PS: ididnt see if there is any type of missing data 
+```{r}
+sum(is.na(train))
+#there is none appearantly :ppp
+```
+
+```{r}
+str(train)
+```
+let's see if the location have any kind of effect on the target variable, 
+we will proceed per coountry
+
+```{r}
+train %>% 
+  select(country, location, y) %>%
+  ggplot(aes(x =  location, fill = y)) + geom_histogram(stat = "count") + facet_grid(vars(country)) + coord_flip()
+  
+```
+
+in all countries but uganda, rural citizens are more likely to get a loan than the urban citizens.
+this is an interesting conclusion, if we take into consideration the economic nature of these countries that is not yet mature.
+let's see what about the job of the responant
+
+```{r}
+levels(train$job)[1] <- "unknown"
+train %>% 
+  ggplot(aes(x =  job, fill = y)) + 
+  geom_histogram(stat = "count") + 
+  facet_grid(vars(country)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + coord_flip()
+```
+
+just for curiosity I want to see how is the location changing with the job 
+
+```{r}
+ #changing between yes and no gives us how much the location and the job affects the target variable y.
+train %>%  ggplot(aes(x= job, fill = location)) + 
+  geom_histogram(stat = "count") + 
+  facet_grid(vars(country),cols = vars(y), scales = "free") + 
+  coord_flip()
+```
+
+what about the gender.? does it affect the decision of y being yes or no.?
+
+```{r}
+train %>% 
+  ggplot(aes(x = job, fill = location)) + 
+  geom_bar(stat = "count") + 
+  facet_grid(vars(country), cols = vars(gender)) +
+  coord_flip()
+```
+males are more likely to get loans, is it because of discrimination or does the demographic reality have an effect on that.?
+```{r}
+table(train$gender) %>% prop.table() %>% round(digits = 2)
+table(train$country) %>% prop.table() %>% round(digits = 2) 
+ggplot(train, aes(x = gender, fill = y)) + geom_histogram(stat = "count") + facet_wrap(vars(country))
+```
+It is to note that the population from which the data is generated is not symetrical, therefore we need to take this into consideration in further analysis.
+
+We can see that the females percentage is higher than that of male, however, we cannot persume discrimination as this is an aggregation of the population of threee countires.
+let's check one by one.
+
+```{r}
+train %>% 
+  filter(y == "Yes") %>%
+  select(country, gender) %>%
+  table() %>%
+  prop.table() %>%
+  round(digits = 3)
+```
+
+in all cases, in each country we have more males than females. 
+
+let's see if the educataion level have anything to do with y:
+```{r}
+train %>% 
+  select(country, education,location, y) %>%
+  table
+#this table as much as it summarizes it all, I prefer pictures to visualize and understand.
+#ggplotting
+ggplot(data = train, aes(x = education, fill = y)) + 
+  geom_histogram(stat = "count") +
+  facet_grid(vars(country), cols = vars(gender), scales = "free") +
+  coord_flip()
+```
+
+appearantly if you are a teacher, you are more likely to get a bank account.
+
+
+Preprocessing
+```{r}
+#let's move to more sophesticated stuff
+#onehot encoding
+str(train)
+#all the variables are facrtors check: 
+range(train$age)
+range(train$housing)
+ggplot(data = train, aes(x = age, fill = gender)) + 
+  geom_histogram(aes(y = ..density..)) + 
+  geom_density(fill = "black", alpha = 0.2)+
+  facet_wrap(vars(country)) + 
+  scale_x_continuous(trans = "log") +   #log gives a better density distribution
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+there are 2 approches in here:
+1* treat age as an ordinal variable and one hot encode it with the rest of the variables
+2* consider it a continuous variable and just apply numerical methods on it.
+
+now we will be encoding all variable into one hot binary values, except for the targert variable and the uniqueid column, which is needed for submission.
+
+```{r}
+train %>% str()
+y <- as.vector(ifelse(train$y == "No", 0, 1))
+train$y <- as.factor(y)
+
+####################################################################
+#drop uniqueid and y from the dataset to be dummyfied.
+
+t1 <- train %>% 
+  select(-uniqueid, -y) %>%
+  sapply(as.factor) 
+dt1 <- dummyVars(~. , data = t1, sep = "_") %>% predict(., t1) 
+
+#####################################################################
+
+dt1 <- cbind(y, dt1) %>% as_tibble()
+dt1 %>% str
+# dt1 is our training set, cleaned, preproccessed and ready for further analysis.
+```
+
+because we need to see if our model is capable of getting the righ t classification right, we need to divide from the train set 
+anoter train and test set.
+
+```{r}
+set.seed(12345)
+i <- createDataPartition(dt1$y, times = 1, p = .7, list = F)
+train1 <- dt1[i,] %>% as_tibble() 
+test1 <- dt1[-i,] %>% as_tibble()
+```
+
+```{r}
+#apriori random forest
+trctrl <- trainControl(method = "cv", number = 10)
+fit1 <- train(as.factor(y)~., data = train1, trControl = trctrl, method = "ranger" )
+test2 <- as.factor(train$y[-i])
+
+pred1 <- predict(fit1, test1)
+
+confusionMatrix(as.factor(test2), as.factor(test1$y))
+```
+
+```{r}
+#we need to fix our test set
+m1 <- colnames(dt1)
+m2 <- colnames(dt2)
+cbind(m, m1) %>%  
+  as.data.frame() %>%
+  filter(m == F)
+nrow(test)
+# we will create 4 vectors with the same length of our test set.
+housing_17 <- rep(0, 10086)
+housing_21 <- rep(0, 10086)
+age_96 <- rep(0, 10086)
+age_98 <- rep(0, 10086)
+dt2 <- cbind(dt2, housing_21, housing_17, age_96, age_98)
+```
+
+
+```{r}
+#let's hope we did not fell into overfitting, so let's preprocess the test set.
+ID <- test %>% select(uniqueid)
+t2 <- test %>% 
+  select(-uniqueid) %>%
+  sapply(as.factor) 
+####################
+####################
+####################
+dt2 <- dummyVars(~. , data = t2, sep = "_") %>% 
+  predict(., t2) %>% 
+  cbind(., hosuing_17, housing_21, age_96, age_98) %>% 
+  as_tibble()
+####################
+####################
+####################
+trctrl <- trainControl(method = "cv", number = 10)
+fit2 <- train(as.factor(y)~., data = dt1, trControl = trctrl, method = "ranger" )
+pr1 <- predict(fit2, dt2) %>% as_tibble()
+###########################################
+###########################################
+### I need to find a way to :
+### match the sub ids with my prediction
+### write my predictions in the sub file without transformation.
+###########################################
+##########################################
+
+```
+
+```{r}
+# I need to find matches betwen the test set and the unique ID set.
+sub <- read_csv("~/Rprojects/instadeep/SubmissionFile.csv")
+sub$uniqueid %>% str_sort(., numeric = T)
+#####################
+#I will delete the uncommun chr from the sub file in order to match later.
+subID <- sub(" .*", "", sub$uniqueid) %>% str_sort(., numeric = T) 
+subID %>% as_tibble()
+```
+
+ 
+```{r}
+test %>% pull(uniqueid) %>% as_tibble()
+sub %>% pull(uniqueid) %>% as_tibble()
+```
+
+```{r}
+#### preprare the sub file
+subid <- sub(" .*", "", sub$uniqueid)
+f1 <- cbind(subid, sub) %>% as_tibble()
+#prepare the pred table for match
+f2 <- cbind(ID, pr1) %>% as_tibble()
+colnames(f2) <- c("subid", "value")
+f1
+f2
+sub <- full_join(f1, f2, by = "subid")
+table(sub$bank_account, sub$value)
+subb <- sub %>% select(value, bank_account)
+sub$value[1:19] <- subb$bank_account[1:19]
+subfinal <- sub %>% select(uniqueid, value)
+colnames(subfinal) <- c("uniqueid", "bank_account")
+subfinal
+#################finally
+write_csv(subfinal, "~/Rprojects/instadeep/ahawa/SubmissionFile.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
